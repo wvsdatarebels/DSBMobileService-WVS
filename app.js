@@ -6,6 +6,14 @@ var DSB = require('dsbapi');
 var axios = require('axios');
 var jsdom = require("jsdom");
 var tableToJson = require('html-table-to-json');
+const NodeCache = require("node-cache");
+
+const responseCache = new NodeCache({
+    stdTTL: 600,
+    checkperiod: 300,
+    deleteOnExpire: true
+});
+
 
 var app = express();
 
@@ -16,48 +24,70 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/dsb/today/get', async function (req, res) {
-    const dsb = new DSB(req.body.username, req.body.password);
+    var cache = responseCache.get("response_today");
 
-    const data = await dsb.fetch();
-    const timetables = DSB.findMethodInData('timetable', data);
+    if (cache == null) {
+        const dsb = new DSB(req.body.username, req.body.password);
 
-    const today = await axios.get(timetables['data'][1]['url']);
-    const today_html = new jsdom.JSDOM(today.data);
-    const today_table = today_html.window.document.getElementsByClassName("mon_list")[0].innerHTML;
-    const today_json = new tableToJson(`<table> ` + today_table + `</table>`);
+        const data = await dsb.fetch();
+        const timetables = DSB.findMethodInData('timetable', data);
 
-    res.status(200).send({
-        responseTime: new Date().getTime(),
-        result: normalizeResponse(today_json.results[0])
-    });
+        const today = await axios.get(timetables['data'][1]['url']);
+        const today_html = new jsdom.JSDOM(today.data);
+        const today_table = today_html.window.document.getElementsByClassName("mon_list")[0].innerHTML;
+        const today_json = new tableToJson(`<table> ` + today_table + `</table>`);
+        const result = normalizeResponse(today_json.results[0]);
+
+        responseCache.set("response_today", result);
+
+        res.status(200).send({
+            responseTime: new Date().getTime(),
+            result: result
+        });
+    } else {
+        res.status(200).send({
+            responseTime: new Date().getTime(),
+            result: cache
+        });
+    }
 
 });
 
 app.post('/dsb/next/get', async function (req, res) {
-    const dsb = new DSB(req.body.username, req.body.password);
+    var cache = responseCache.get("response_next");
 
-    const data = await dsb.fetch();
-    const timetables = DSB.findMethodInData('timetable', data);
+    if (cache == null) {
+        const dsb = new DSB(req.body.username, req.body.password);
 
-    const next = await axios.get(timetables['data'][0]['url']);
-    const next_html = new jsdom.JSDOM(next.data);
-    const next_table = next_html.window.document.getElementsByClassName("mon_list");
-    var result = [];
+        const data = await dsb.fetch();
+        const timetables = DSB.findMethodInData('timetable', data);
 
-    for (var i = 0; i < next_table.length; i++) {
-        const json = new tableToJson(`<table> ` + next_table[i].innerHTML + `</table>`);
+        const next = await axios.get(timetables['data'][0]['url']);
+        const next_html = new jsdom.JSDOM(next.data);
+        const next_table = next_html.window.document.getElementsByClassName("mon_list");
+        var result = [];
 
-        result.push({
-            date: json.results[0][0]['Datum'],
-            data: normalizeResponse(json.results[0])
+        for (var i = 0; i < next_table.length; i++) {
+            const json = new tableToJson(`<table> ` + next_table[i].innerHTML + `</table>`);
+
+            result.push({
+                date: json.results[0][0]['Datum'],
+                data: normalizeResponse(json.results[0])
+            });
+        }
+
+        responseCache.set("response_next", result);
+
+        res.status(200).send({
+            responseTime: new Date().getTime(),
+            result: result
+        });
+    } else {
+        res.status(200).send({
+            responseTime: new Date().getTime(),
+            result: cache
         });
     }
-
-    res.status(200).send({
-        responseTime: new Date().getTime(),
-        result: result
-    });
-
 });
 
 function normalizeResponse(resp) {
